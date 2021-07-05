@@ -1,0 +1,591 @@
+swagger: '2.0'
+info:
+  version: '1.0'
+  title: Wallets Webhooks Events API
+  termsOfService: 'http://rbkmoney.com/'
+  contact:
+    name: RBKmoney support team
+    email: tech-support@rbkmoney.com
+    url: 'https://api.rbk.money'
+  description: |
+
+    ## Wallet Webhook Events API
+
+    Данная спецификация определяет протокол доставки оповещений о возникновении
+    новых событий по кошелькам в рамках вашей организации, которые платформа доставляет в
+    виде HTTP-запросов на URL-адреса созданных вами webhook'ов. Обработчики для
+    подобного рода запросов необходимо реализовать на стороне вашего серверного
+    кода согласно данной спецификации.
+
+    Webhook — это подписка на определенный тип события либо их группу,
+    касающихся различных объектов в рамках вашей организации. Для управления
+    webhook'ами используются методы RBKmoney API, описанные в спецификации
+    [RBKmoney Webhooks Management API](https://rbkmoney.github.io/wallets-api/v0/#Webhooks).
+    Когда наступает одно из событий в рамках определенного кошелька (например,
+    изменение статуса кошелька), платформа выбирает
+    webhook, подходящий под этот тип события, и отправляет HTTP-запрос,
+    содержащий сообщение в формате JSON на указанный в этом webhook'е URL. Если
+    вы создали несколько webhook'ов, подходящих под этот тип события, то событие
+    доставляется одновременно на все заданные в них URL в неопределённом
+    порядке.
+
+    ## Стратегия доставки
+
+    Платформа гарантирует порядок доставки событий в рамках определенного предмета оповещения
+    (кошелек, пополнение, выплата и т.п.). Платформа поддерживает очередь сообщений для каждого предмета оповещения,
+    чтобы соблюсти очередность и гарантированную доставку.
+
+    Запрос на доставку считается успешным только при получении ответа со
+    статусом `200`. Платформа будет ожидать успешного ответа на отправленный
+    запрос в течение 10 секунд. В случае ответа любым другим статусом или по
+    истечении указанного времени, отведённого на обработку оповещения, платформа
+    будет пытаться повторно доставить оповещения до получения успешного ответа,
+    либо до принятия решения о невозможности доставить информацию. Попытки
+    доставки будут производиться со следующими временными интервалами между
+    запросами:
+
+      - 30 секунд,
+      - 5 минут,
+      - 15 минут,
+      - 1 час.
+      - каждый час в течение суток (24 часа)
+
+    Если последняя попытка доставить оповещение оканчивается неудачей, все события, которые
+    накопились в очереди этого кошелька, отбрасываются.
+
+    ## Авторизация полученных сообщений
+
+    Платформа подтверждает подлинность оповещений, подписывая сообщения
+    приватным ключом, уникальным для каждого webhook'а, парный публичный ключ к
+    которому содержится в данных этого webhook'а. Подпись передается в
+    HTTP-заголовке `Content-Signature`. В заголовке в виде различных атрибутов
+    содержится информация об использованном при формировании подписи алгоритме и
+    значение подписи в формате
+    [URL-safe base-64](https://tools.ietf.org/html/rfc4648).
+
+    ```
+    Content-Signature: alg=RS256; digest=zFuf7bRH4RHwyktaqHQwmX5rn3LfSb4dKo...
+    ```
+
+    На данный момент возможно использование единственного алоритма формирования
+    подписи.
+
+    ### [RS256](https://tools.ietf.org/html/rfc7518#section-3.3)
+
+    Подпись формируется согласно алгоритму
+    [RSASSA-PKCS1-v1_5](https://tools.ietf.org/html/rfc3447#section-8.2), на
+    вход которому подаётся результат вычисления хэша сообщения по алгоритму
+    [SHA-256](https://tools.ietf.org/html/rfc6234).
+
+    Набор атрибутов заголовка и список возможных алгоритмов формирования подписи
+    в дальнейшем могут быть расширены.
+schemes:
+  - https
+consumes:
+  - application/json; charset=utf-8
+produces:
+  - application/json; charset=utf-8
+parameters:
+  signature:
+    name: Content-Signature
+    in: header
+    description: |
+      Подпись сообщения, сформированная согласно указанным выше правилам
+    required: true
+    type: string
+tags:
+  - name: Event Notifications
+    x-displayName: Оповещения
+    description: Доставка оповещений о событиях платформы.
+paths:
+  /webhook-url:
+    post:
+      tags:
+        - Event Notifications
+      summary: Оповестить о событии
+      operationId: notifyWebhookEvent
+      parameters:
+        - $ref: '#/parameters/signature'
+        - in: body
+          name: event
+          description: Данные произошедшего в платформе события
+          required: true
+          schema:
+            $ref: '#/definitions/Event'
+      responses:
+        '200':
+          description: Оповещение обработано
+definitions:
+  Account:
+    description: Данные счета
+    type: object
+    required:
+      - currency
+      - identity
+    properties:
+      id:
+        description: Идентификатор счета
+        type: string
+        example: tZ0jUmlsV0
+      createdAt:
+        description: Дата и время создания счета
+        type: string
+        format: date-time
+      currency:
+        description: |
+          Валюта, символьный код согласно [ISO
+          4217](http://www.iso.org/iso/home/standards/currency_codes.htm).
+        type: string
+        pattern: '^[A-Z]{3}$'
+        example: RUB
+      identity:
+        description: Идентификатор личности владельца кошелька
+        type: string
+        example: tZ0jUmlsV0
+      accountNumber:
+        description: Номер счета
+        type: integer
+        format: int64
+        example: 1430000
+  AccountID:
+    description: Идентификатор счета
+    type: string
+    example: tZ0jUmlsV0
+  AccountNumber:
+    description: Номер счета
+    type: integer
+    format: int64
+    example: 1430000
+  Asset:
+    description: |
+      Объём денежных средств
+    type: object
+    required:
+      - amount
+      - currency
+    properties:
+      amount:
+        description: |
+          Сумма денежных средств в минорных единицах, например, в копейках
+        type: integer
+        format: int64
+        example: 1430000
+      currency:
+        description: |
+          Валюта, символьный код согласно [ISO
+          4217](http://www.iso.org/iso/home/standards/currency_codes.htm).
+        type: string
+        pattern: '^[A-Z]{3}$'
+        example: RUB
+  BankCard:
+    description: Данные банковской карты
+    allOf:
+      - $ref: '#/definitions/DestinationResource'
+      - type: object
+        required:
+          - cardNumberMask
+          - paymentSystem
+        properties:
+          cardNumberMask:
+            description: Маскированый номер карты
+            type: string
+            pattern: '^\d{6,8}\*+\d{2,4}$'
+          bin:
+            description: BIN банка-эмитента карты
+            type: string
+            pattern: '^\d{6,8}$'
+          lastDigits:
+            description: Последние цифры номера карты
+            type: string
+            pattern: '^\d{2,4}$'
+          paymentSystem:
+            description: Платежная система
+            type: string
+            enum:
+              - visa
+              - mastercard
+              - visaelectron
+              - maestro
+              - forbrugsforeningen
+              - dankort
+              - amex
+              - dinersclub
+              - discover
+              - unionpay
+              - jcb
+              - nspkmir
+              - elo
+              - rupay
+              - ebt
+              - dummy
+              - uzcard
+          tokenProvider:
+            description: Провайдер платежных токенов
+            type: string
+            enum:
+              - applepay
+              - googlepay
+              - samsungpay
+  BankCardPaymentSystem:
+    description: Платежная система
+    type: string
+    enum:
+      - visa
+      - mastercard
+      - visaelectron
+      - maestro
+      - forbrugsforeningen
+      - dankort
+      - amex
+      - dinersclub
+      - discover
+      - unionpay
+      - jcb
+      - nspkmir
+      - elo
+      - rupay
+      - ebt
+      - dummy
+      - uzcard
+  BankCardTokenProvider:
+    description: Провайдер платежных токенов
+    type: string
+    enum:
+      - applepay
+      - googlepay
+      - samsungpay
+  CryptoCurrency:
+    description: Криптовалюта
+    type: string
+    enum:
+      - Bitcoin
+      - Litecoin
+      - BitcoinCash
+      - Ripple
+      - Ethereum
+      - Zcash
+  CryptoWallet:
+    description: Данные криптовалютного кошелька
+    allOf:
+      - $ref: '#/definitions/DestinationResource'
+      - type: object
+        required:
+          - cryptoWalletId
+          - currency
+        properties:
+          cryptoWalletId:
+            description: Идентификатор (он же адрес) криптовалютного кошелька
+            type: string
+            minLength: 16
+            maxLength: 256
+            example: zu3TcwGI71Bpaaw2XkLWZXlhMdn4zpVzMQ
+          currency:
+            description: Криптовалюта
+            type: string
+            enum:
+              - Bitcoin
+              - Litecoin
+              - BitcoinCash
+              - Ripple
+              - Ethereum
+              - Zcash
+  CurrencyID:
+    description: |
+      Валюта, символьный код согласно [ISO
+      4217](http://www.iso.org/iso/home/standards/currency_codes.htm).
+    type: string
+    pattern: '^[A-Z]{3}$'
+    example: RUB
+  Destination:
+    description: Данные приемника денежных средств
+    type: object
+    required:
+      - name
+      - identity
+      - currency
+      - resource
+    properties:
+      id:
+        description: Идентификатор места назначения денежных средств
+        type: string
+        example: 10ASF74D98
+        readOnly: true
+      name:
+        description: |
+          Человекочитаемое название приёмника средств, по которому его легко узнать
+        type: string
+        example: Squarey plastic thingy
+      identity:
+        description: Идентификатор личности владельца кошелька
+        type: string
+        example: tZ0jUmlsV0
+      currency:
+        description: |
+          Валюта, символьный код согласно [ISO
+          4217](http://www.iso.org/iso/home/standards/currency_codes.htm).
+        type: string
+        pattern: '^[A-Z]{3}$'
+        example: RUB
+      resource:
+        $ref: '#/definitions/DestinationResource'
+      metadata:
+        description: |
+          Произвольный, специфичный для клиента API и непрозрачный для системы набор данных, ассоциированных с
+          данным приёмником
+        type: object
+        example:
+          color_hint: olive-green
+      externalID:
+        description: |
+          Уникальный идентификатор сущности на вашей стороне.
+
+          При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+        type: string
+        example: '10036274'
+  DestinationAuthorized:
+    description: Смена статуса приемника на авторизованный
+    allOf:
+      - $ref: '#/definitions/Event'
+      - type: object
+        required:
+          - destinationID
+        properties:
+          destinationID:
+            description: Идентификатор места назначения денежных средств
+            type: string
+            example: 10ASF74D98
+          externalID:
+            description: |
+              Уникальный идентификатор сущности на вашей стороне.
+
+              При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+            type: string
+            example: '10036274'
+  DestinationCreated:
+    description: Событие создания приемника денежных средств
+    allOf:
+      - $ref: '#/definitions/Event'
+      - type: object
+        required:
+          - destination
+        properties:
+          destination:
+            $ref: '#/definitions/Destination'
+  DestinationID:
+    description: Идентификатор места назначения денежных средств
+    type: string
+    example: 10ASF74D98
+  DestinationName:
+    description: 'Человекочитаемое название места назначения, по которому его легко узнать'
+    type: string
+    example: Worldwide PHP Awareness Initiative
+  DestinationResource:
+    description: 'Ресурс приёмника денежных средств, используемый для осуществления выводов'
+    type: object
+    discriminator: type
+    required:
+      - type
+    properties:
+      type:
+        description: |
+          Тип ресурса приёмника средств.
+        type: string
+        enum:
+          - BankCard
+          - CryptoWallet
+          - DigitalWallet
+  DestinationUnauthorized:
+    description: Смена статуса приемника на не авторизованный
+    allOf:
+      - $ref: '#/definitions/Event'
+      - type: object
+        required:
+          - destinationID
+        properties:
+          destinationID:
+            description: Идентификатор места назначения денежных средств
+            type: string
+            example: 10ASF74D98
+          externalID:
+            description: |
+              Уникальный идентификатор сущности на вашей стороне.
+
+              При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+            type: string
+            example: '10036274'
+  DigitalWallet:
+    description: Данные криптовалютного кошелька
+    allOf:
+      - $ref: '#/definitions/DestinationResource'
+      - type: object
+        required:
+          - digitalWalletId
+          - digitalWalletProvider
+        properties:
+          digitalWalletId:
+            description: Идентификатор
+            type: string
+            minLength: 16
+            maxLength: 256
+            example: zu3TcwGI71Bpaaw2XkLWZXlhMdn4zpVzMQ
+          digitalWalletProvider:
+            description: |
+              Идентификатор провайдера
+            type: string
+            enum:
+              - webmoney
+  Event:
+    description: Данные события
+    type: object
+    discriminator: eventType
+    required:
+      - occuredAt
+      - topic
+      - eventType
+    properties:
+      eventID:
+        description: Идентификатор события в системе
+        type: string
+      occuredAt:
+        description: Дата и время возникновения события
+        type: string
+        format: date-time
+      topic:
+        description: Предмет оповещения
+        type: string
+        enum:
+          - WithdrawalTopic
+          - DestinationTopic
+      eventType:
+        type: string
+        description: Тип произошедшего с предметом оповещения события
+        enum:
+          - WithdrawalStarted
+          - WithdrawalSucceeded
+          - WithdrawalFailed
+          - DestinationCreated
+          - DestinationAuthorized
+          - DestinationUnauthorized
+  ExternalID:
+    description: |
+      Уникальный идентификатор сущности на вашей стороне.
+
+      При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+    type: string
+    example: '10036274'
+  IdentityID:
+    description: Идентификатор личности владельца кошелька
+    type: string
+    example: tZ0jUmlsV0
+  WalletID:
+    description: Идентификатор кошелька
+    type: string
+    example: '10068321'
+  Withdrawal:
+    description: Данные вывода денежных средств
+    type: object
+    required:
+      - wallet
+      - destination
+      - body
+    properties:
+      id:
+        description: Идентификатор вывода денежных средств
+        type: string
+        example: tZ0jUmlsV0
+      createdAt:
+        description: Дата и время запуска вывода
+        type: string
+        format: date-time
+      destination:
+        description: Идентификатор места назначения денежных средств
+        type: string
+        example: 10ASF74D98
+      body:
+        description: |
+          Объём денежных средств
+        type: object
+        required:
+          - amount
+          - currency
+        properties:
+          amount:
+            description: |
+              Сумма денежных средств в минорных единицах, например, в копейках
+            type: integer
+            format: int64
+            example: 1430000
+          currency:
+            description: |
+              Валюта, символьный код согласно [ISO
+              4217](http://www.iso.org/iso/home/standards/currency_codes.htm).
+            type: string
+            pattern: '^[A-Z]{3}$'
+            example: RUB
+      metadata:
+        description: |
+          Произвольный, специфичный для клиента API и непрозрачный для системы набор данных, ассоциированных с
+          данным выводом
+      wallet:
+        description: Идентификатор кошелька
+        type: string
+        example: '10068321'
+      externalID:
+        description: |
+          Уникальный идентификатор сущности на вашей стороне.
+
+          При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+        type: string
+        example: '10036274'
+  WithdrawalFailed:
+    description: Событие о неуспешном осуществлении вывода средств
+    allOf:
+      - $ref: '#/definitions/Event'
+      - type: object
+        required:
+          - withdrawalID
+        properties:
+          withdrawalID:
+            description: Идентификатор вывода денежных средств
+            type: string
+            example: tZ0jUmlsV0
+          externalID:
+            description: |
+              Уникальный идентификатор сущности на вашей стороне.
+
+              При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+            type: string
+            example: '10036274'
+  WithdrawalID:
+    description: Идентификатор вывода денежных средств
+    type: string
+    example: tZ0jUmlsV0
+  WithdrawalStarted:
+    description: Событие о начале осуществления вывода средств
+    allOf:
+      - $ref: '#/definitions/Event'
+      - type: object
+        required:
+          - withdrawal
+        properties:
+          withdrawal:
+            $ref: '#/definitions/Withdrawal'
+  WithdrawalSucceeded:
+    description: Событие об успешном осуществлении вывода средств
+    allOf:
+      - $ref: '#/definitions/Event'
+      - type: object
+        required:
+          - withdrawalID
+        properties:
+          withdrawalID:
+            description: Идентификатор вывода денежных средств
+            type: string
+            example: tZ0jUmlsV0
+          externalID:
+            description: |
+              Уникальный идентификатор сущности на вашей стороне.
+
+              При указании будет использован для того, чтобы гарантировать идемпотентную обработку операции.
+            type: string
+            example: '10036274'
